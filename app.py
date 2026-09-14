@@ -159,7 +159,96 @@ def inicio():
 
 
 @app.route("/editar", methods=["GET", "POST"])
+@app.route("/editar", methods=["GET", "POST"])
 def editar():
+
+    if request.method == "GET":
+        return render_template("index.html")
+
+    print("FILES RECIBIDOS:", request.files)
+    print("FORMULARIO:", request.form)
+
+    archivos = request.files.getlist("fotos")
+
+    print("CANTIDAD DE ARCHIVOS:", len(archivos))
+
+    if len(archivos) == 0:
+        return "No se recibieron fotos. Revisar request.files", 400
+
+    resultados = []
+
+    proceso_id = str(uuid.uuid4())
+
+    carpeta_proceso = os.path.join(
+        RESULT_FOLDER,
+        proceso_id
+    )
+
+    os.makedirs(carpeta_proceso, exist_ok=True)
+
+    for archivo in archivos:
+
+        print("ARCHIVO:", archivo.filename)
+
+        if archivo.filename == "":
+            continue
+
+        nombre_original = os.path.basename(
+            archivo.filename
+        )
+
+        entrada = os.path.join(
+            UPLOAD_FOLDER,
+            proceso_id + "_" + nombre_original
+        )
+
+        salida = os.path.join(
+            carpeta_proceso,
+            "mejorada_" + nombre_original
+        )
+
+        archivo.save(entrada)
+
+        print("Procesando:", nombre_original)
+
+        resultado = mejorar_foto(
+            entrada,
+            salida
+        )
+
+        print("Resultado:", resultado)
+
+        if resultado:
+            resultados.append(salida)
+
+    if not resultados:
+        return "Las fotos fueron recibidas pero no pudieron procesarse", 400
+
+    zip_path = os.path.join(
+        RESULT_FOLDER,
+        "fotos_mejoradas_" + proceso_id + ".zip"
+    )
+
+    with zipfile.ZipFile(
+        zip_path,
+        "w",
+        zipfile.ZIP_DEFLATED
+    ) as zip_file:
+
+        for archivo in resultados:
+
+            zip_file.write(
+                archivo,
+                os.path.basename(archivo)
+            )
+
+    print("ZIP CREADO:", zip_path)
+
+    return send_file(
+        zip_path,
+        as_attachment=True,
+        download_name="fotos_mejoradas.zip"
+    )
 
     # Si alguien entra directamente a /editar
     if request.method == "GET":
