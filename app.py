@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 import os
 import zipfile
+import uuid
 
 app = Flask(__name__)
 
@@ -20,18 +21,14 @@ def mejorar_foto(ruta, salida):
     if imagen is None:
         return False
 
-    # --------------------------------
     # 1. ANALIZAR BRILLO
-    # --------------------------------
 
     gris = cv2.cvtColor(imagen, cv2.COLOR_BGR2GRAY)
 
     brillo = np.mean(gris)
     contraste = np.std(gris)
 
-    # --------------------------------
     # 2. ILUMINACION AUTOMATICA
-    # --------------------------------
 
     if brillo < 60:
         gamma = 1.10
@@ -51,16 +48,17 @@ def mejorar_foto(ruta, salida):
 
     imagen = cv2.LUT(imagen, tabla)
 
-    # --------------------------------
     # 3. ALTAS LUCES Y SOMBRAS
-    # --------------------------------
 
     lab = cv2.cvtColor(imagen, cv2.COLOR_BGR2LAB)
 
     l, a, b = cv2.split(lab)
 
-    sombras = np.mean(l[l < 80])
-    altas_luces = np.mean(l[l > 180])
+    pixeles_sombras = l[l < 80]
+    pixeles_altas = l[l > 180]
+
+    sombras = np.mean(pixeles_sombras) if len(pixeles_sombras) > 0 else 80
+    altas_luces = np.mean(pixeles_altas) if len(pixeles_altas) > 0 else 180
 
     if sombras < 60:
         l = np.where(
@@ -85,9 +83,7 @@ def mejorar_foto(ruta, salida):
         cv2.COLOR_LAB2BGR
     )
 
-    # --------------------------------
     # 4. SATURACION
-    # --------------------------------
 
     hsv = cv2.cvtColor(
         imagen,
@@ -123,9 +119,7 @@ def mejorar_foto(ruta, salida):
         cv2.COLOR_HSV2BGR
     )
 
-    # --------------------------------
     # 5. REDUCCION DE RUIDO SUAVE
-    # --------------------------------
 
     imagen = cv2.fastNlMeansDenoisingColored(
         imagen,
@@ -136,9 +130,7 @@ def mejorar_foto(ruta, salida):
         15
     )
 
-    # --------------------------------
     # 6. NITIDEZ SUAVE
-    # --------------------------------
 
     suavizada = cv2.GaussianBlur(
         imagen,
@@ -154,9 +146,7 @@ def mejorar_foto(ruta, salida):
         0
     )
 
-    # --------------------------------
-    # GUARDAR
-    # ---------------------------------
+    # 7. GUARDAR
 
     cv2.imwrite(salida, imagen)
 
@@ -168,46 +158,67 @@ def inicio():
     return render_template("index.html")
 
 
-@app.route("/editar", methods=["POST"])
+@app.route("/editar", methods=["GET", "POST"])
 def editar():
+
+    # Si alguien entra directamente a /editar
+    if request.method == "GET":
+        return render_template("index.html")
 
     archivos = request.files.getlist("fotos")
 
+    if not archivos:
+        return "No se recibieron fotos", 400
+
     resultados = []
+
+    # Identificador único para esta edición
+    proceso_id = str(uuid.uuid4())
+
+    carpeta_proceso = os.path.join(
+        RESULT_FOLDER,
+        proceso_id
+    )
+
+    os.makedirs(carpeta_proceso, exist_ok=True)
 
     for archivo in archivos:
 
         if archivo.filename == "":
             continue
 
-        nombre = archivo.filename
+        nombre_original = os.path.basename(
+            archivo.filename
+        )
 
         entrada = os.path.join(
             UPLOAD_FOLDER,
-            nombre
+            proceso_id + "_" + nombre_original
         )
 
         salida = os.path.join(
-            RESULT_FOLDER,
-            "mejorada_" + nombre
+            carpeta_proceso,
+            "mejorada_" + nombre_original
         )
 
         archivo.save(entrada)
 
-        mejorar_foto(
+        resultado = mejorar_foto(
             entrada,
             salida
         )
 
-        resultados.append(salida)
+        if resultado:
+            resultados.append(salida)
 
-    # --------------------------------
+    if not resultados:
+        return "No se pudieron procesar las fotos", 400
+
     # CREAR ZIP
-    # --------------------------------
 
     zip_path = os.path.join(
         RESULT_FOLDER,
-        "fotos_mejoradas.zip"
+        "fotos_mejoradas_" + proceso_id + ".zip"
     )
 
     with zipfile.ZipFile(
@@ -223,9 +234,7 @@ def editar():
                 os.path.basename(archivo)
             )
 
-    # --------------------------------
     # DEVOLVER ZIP
-    # --------------------------------
 
     return send_file(
         zip_path,
@@ -233,5 +242,9 @@ def editar():
         download_name="fotos_mejoradas.zip"
     )
 
+
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 5000))
+    )
